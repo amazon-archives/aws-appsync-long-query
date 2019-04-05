@@ -184,7 +184,6 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       Path: /long-query/
-      RoleName: appsync-long-query-service-role
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
       AssumeRolePolicyDocument:
