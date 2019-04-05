@@ -1,0 +1,11 @@
+{
+  "name": "aws-appsync-long-query-result",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "author": "jkahn@",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "axios": "^0.18.0"
+  }
+}

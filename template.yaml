@@ -1,0 +1,221 @@
+# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: 'AWS::Serverless-2016-10-31'
+
+Description: AWS AppSync Long Running Query
+
+Resources:
+  ## AppSync ##
+  SearchApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      AuthenticationType: API_KEY
+      Name: SearchApi
+
+  SearchApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt SearchApi.ApiId
+      Description: API Key for Search API
+
+  MessagesSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt SearchApi.ApiId
+      DefinitionS3Location: schema.graphql
+
+
+  SearchQueryResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt SearchApi.ApiId
+      TypeName: Query
+      FieldName: search
+      DataSourceName: !GetAtt StepFunctionsHttpDataSource.Name
+      # Generate a unique execution id for the step function execution so
+      # that it can be passed through to Lambda on Step Function start.
+      # Use context stash so it is also available in response mapping.
+      RequestMappingTemplate: !Sub |
+        $util.qr($ctx.stash.put("executionId", $util.autoId()))
+
+        {
+          "version": "2018-05-29",
+          "method": "POST",
+          "resourcePath": "/",
+          "params": {
+            "headers": {
+              "content-type": "application/x-amz-json-1.0",
+              "x-amz-target":"AWSStepFunctions.StartExecution"
+            },
+            "body": {
+              "stateMachineArn": "${SearchStateMachine}",
+              "input": "{ \"name\": \"$ctx.stash.executionId\" }"
+            }
+          }
+        }
+      # Return the execution id from Step Functions for client to subscribe.
+      ResponseMappingTemplate: |
+        {
+          "id": "${ctx.stash.executionId}",
+          "status": "PENDING"
+        }
+
+  PublishResultMutationResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt SearchApi.ApiId
+      TypeName: Mutation
+      FieldName: publishResult
+      DataSourceName: !GetAtt PublishResultDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "payload": {
+            "id": "${ctx.arguments.result.id}",
+            "status": "${ctx.arguments.result.status}",
+            "listings": "${ctx.arguments.result.listings}"
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.arguments.result)
+
+  StepFunctionsHttpDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt SearchApi.ApiId
+      Name: StepFunctionsHttpDataSource
+      Description: Step Functions HTTP
+      Type: HTTP
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      HttpConfig:
+        Endpoint: !Sub https://states.${AWS::Region}.amazonaws.com/
+        AuthorizationConfig:
+          AuthorizationType: AWS_IAM
+          AwsIamConfig:
+            SigningRegion: !Ref AWS::Region
+            SigningServiceName: states
+
+  PublishResultDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt SearchApi.ApiId
+      Name: PublishResultDataSource
+      Description: Local data source to publish results
+      Type: NONE
+  
+  SearchStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: aws-appsync-long-query-search
+      RoleArn: !GetAtt SearchStateMachineRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Wait and return a result",
+          "StartAt": "Wait For One Minute",
+          "States": {
+            "Wait For One Minute": {
+              "Type": "Wait",
+              "Seconds": 60,
+              "Next": "Return Result"
+            },
+            "Return Result": {
+              "Type": "Task",
+              "Resource": "${ReturnResultFunction.Arn}",
+              "ResultPath": "$",
+              "TimeoutSeconds": 10,
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "ResultPath": "$.error",
+                "Next": "HandleError"
+              }],
+              "End": true
+            },
+            "HandleError": {
+              "Type": "Fail",
+              "Cause": "$.error"
+            }
+          }
+        }
+    
+  ReturnResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Returns a result by calling AppSync mutation, triggering subscription
+      CodeUri: result/
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Timeout: 10
+      Environment:
+        Variables:
+          APPSYNC_API_KEY: !GetAtt SearchApiKey.ApiKey
+          APPSYNC_ENDPOINT: !GetAtt SearchApi.GraphQLUrl
+          
+
+  #
+  # IAM
+  #
+  SearchStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub states.${AWS::Region}.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /long-query/
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ReturnResultFunction.Arn
+
+  AppSyncServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /long-query/
+      RoleName: appsync-long-query-service-role
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+      Policies:
+        - PolicyName: appsync-long-query-service-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref SearchStateMachine
+
+Outputs:
+  ApiEndpoint:
+    Description: AppSync Endpoint
+    Value: !GetAtt SearchApi.GraphQLUrl
+  
+  ApiId:
+    Description: AppSync API ID
+    Value: !GetAtt SearchApi.ApiId
+
+  ApiKey:
+    Description: AppSync API Key
+    Value: !GetAtt SearchApiKey.ApiKey

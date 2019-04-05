@@ -1,0 +1,41 @@
+# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+type Result {
+  id: ID!
+  status: ResultStatus!
+  listings: [String]
+}
+
+enum ResultStatus {
+  PENDING
+  COMPLETE
+  ERROR
+}
+
+input ResultInput {
+  id: ID!
+  status: ResultStatus!
+  listings: [String]!
+}
+
+type Query {
+  # called by client to initiate long running search
+  search(text: String!): Result
+}
+
+type Mutation {
+  # called by backend when search is complete
+  publishResult(result: ResultInput): Result
+}
+
+type Subscription {
+  onSearchResult(id: ID!): [Result]
+    @aws_subscribe(mutations: [ "publishResult" ])
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
