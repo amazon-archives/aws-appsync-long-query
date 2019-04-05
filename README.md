@@ -43,7 +43,7 @@ $ sam deploy --template-file packaged.yaml \
              --capabilities CAPABILITY_NAMED_IAM
 ```
 
-Once deployment is finished, we can collect a few items to configure the sample client application. Open the file `client/src/aws-config.js` in your favorite text editor. Set the value of `aws_appsync_region` to the region you selected (e.g. N. Virginia = us-east-2). Set the other values by retrieving output data from the SAM stack:
+Once deployment is finished, we can collect a few items to configure the sample client application. Open the file `client/src/aws-config.js` in your favorite text editor. Set the value of `aws_appsync_region` to the region you selected (e.g. N. Virginia = us-east-1). Set the other values by retrieving output data from the SAM stack:
 
 ``` bash
 # aws_appsync_graphqlEndpoint
