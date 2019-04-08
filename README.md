@@ -66,7 +66,7 @@ Open your browser and navigate to http://localhost:8080. Click the "Search" butt
 
 ![Sample Client](images/aws-appsync-long-query-sample-client.png)
 
-## CLeaning Up
+## Cleaning Up
 
 Once finished, feel free to clean-up the sample code:
 
