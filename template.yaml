@@ -146,7 +146,7 @@ Resources:
     Properties:
       Description: Returns a result by calling AppSync mutation, triggering subscription
       CodeUri: result/
-      Runtime: nodejs8.10
+      Runtime: nodejs10.x
       Handler: index.handler
       Timeout: 10
       Environment:
